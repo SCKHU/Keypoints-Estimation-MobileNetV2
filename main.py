@@ -1,9 +1,9 @@
 from utils import parse_args, create_experiment_dirs, calculate_flops
-from model import MobileNet
+from model import MobileNetV2
 from train import Train
 from data_loader import DataLoader
 from summarizer import Summarizer
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 
 
 def main():
@@ -34,7 +34,7 @@ def main():
 
     # Model creation
     print("Building the model...")
-    model = MobileNet(config_args)
+    model = MobileNetV2(config_args)
     print("Model is built successfully\n\n")
 
     # Summarizer creation

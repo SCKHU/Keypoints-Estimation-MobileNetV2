@@ -3,6 +3,36 @@ import numpy as np
 
 
 ############################################################################################################
+# bottleneck layer Methods (MobileNetV2)
+def expanded_conv2d(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAME', 
+                    stride=(1, 1), k=None, depth_multiplier=1.0, residual=False,
+                    initializer=tf.contrib.layers.xavier_initializer(), 
+                    l2_strength=0.0, bias=(0.0, 0.0, 0.0), activation=None,
+                    batchnorm_enabled=False, dropout_keep_prob=-1, is_training=True):
+    with tf.variable_scope(name):
+      # expand (rate = k)
+      if k == None:
+        conv_1 = x
+      else:
+        ch_expand = x.get_shape()[-1].value * 6
+        conv_1 = conv2d('expand', x=x, w=None, num_filters=ch_expand, kernel_size=(1, 1),
+                      initializer=initializer, l2_strength=l2_strength, bias=None, activation=activation,
+                      batchnorm_enabled=batchnorm_enabled, dropout_keep_prob=dropout_keep_prob, is_training=is_training)      
+      # depthwise convolution
+      conv_2 = depthwise_conv2d('depthwise', x=conv_1, w=None, kernel_size=kernel_size, padding=padding,stride=stride,
+                    initializer=initializer, l2_strength=l2_strength, bias=None, activation=activation,
+                    batchnorm_enabled=batchnorm_enabled, is_training=is_training)
+      # project
+      conv_3 = conv2d('project', x=conv_2, w=None, num_filters=num_filters, kernel_size=(1, 1),
+                    initializer=initializer, l2_strength=l2_strength, bias=None, activation=None,
+                    batchnorm_enabled=batchnorm_enabled,  dropout_keep_prob=dropout_keep_prob, is_training=is_training)      
+      if residual:
+        conv_o = conv_3 + x
+      else:
+        conv_o = conv_3
+      return conv_o
+      
+############################################################################################################
 # Convolution layer Methods
 def __conv2d_p(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAME', stride=(1, 1),
                initializer=tf.contrib.layers.xavier_initializer(), l2_strength=0.0, bias=0.0):
@@ -29,13 +59,16 @@ def __conv2d_p(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAM
                 w = __variable_with_weight_decay(kernel_shape, initializer, l2_strength)
             __variable_summaries(w)
         with tf.name_scope('layer_biases'):
+          if not bias == None:
             if isinstance(bias, float):
                 bias = tf.get_variable('biases', [num_filters], initializer=tf.constant_initializer(bias))
             __variable_summaries(bias)
         with tf.name_scope('layer_conv2d'):
             conv = tf.nn.conv2d(x, w, stride, padding)
-            out = tf.nn.bias_add(conv, bias)
-
+            if not bias == None:
+              out = tf.nn.bias_add(conv, bias)
+            else:
+              out = conv
     return out
 
 
@@ -80,7 +113,7 @@ def conv2d(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAME', 
                 conv_a = activation(conv_o_b)
 
         def dropout_with_keep():
-            return tf.nn.dropout(conv_a, dropout_keep_prob)
+            return tf.nn.dropout(conv_a, dropout_keep_prob)/dropout_keep_prob
 
         def dropout_no_keep():
             return tf.nn.dropout(conv_a, 1.0)
@@ -108,12 +141,16 @@ def __depthwise_conv2d_p(name, x, w=None, kernel_size=(3, 3), padding='SAME', st
                 w = __variable_with_weight_decay(kernel_shape, initializer, l2_strength)
             __variable_summaries(w)
         with tf.name_scope('layer_biases'):
+          if not bias == None:
             if isinstance(bias, float):
                 bias = tf.get_variable('biases', [x.shape[-1]], initializer=tf.constant_initializer(bias))
             __variable_summaries(bias)
         with tf.name_scope('layer_conv2d'):
             conv = tf.nn.depthwise_conv2d(x, w, stride, padding)
-            out = tf.nn.bias_add(conv, bias)
+            if not bias == None:
+              out = tf.nn.bias_add(conv, bias)
+            else:
+              out = conv
 
     return out
 
@@ -227,7 +264,7 @@ def dense(name, x, w=None, output_dim=128, initializer=tf.contrib.layers.xavier_
                 dense_a = activation(dense_o_b)
 
         def dropout_with_keep():
-            return tf.nn.dropout(dense_a, dropout_keep_prob)
+            return tf.nn.dropout(dense_a, dropout_keep_prob)/dropout_keep_prob
 
         def dropout_no_keep():
             return tf.nn.dropout(dense_a, 1.0)
@@ -245,7 +282,7 @@ def dropout(x, dropout_keep_prob, is_training):
     """Dropout special layer"""
 
     def dropout_with_keep():
-        return tf.nn.dropout(x, dropout_keep_prob)
+        return tf.nn.dropout(x, dropout_keep_prob)/dropout_keep_prob
 
     def dropout_no_keep():
         return tf.nn.dropout(x, 1.0)

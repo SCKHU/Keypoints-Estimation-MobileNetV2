@@ -1,11 +1,11 @@
 import tensorflow as tf
-from layers import depthwise_separable_conv2d, conv2d, avg_pool_2d, dense, flatten, dropout
+from layers import depthwise_separable_conv2d, conv2d, avg_pool_2d, dense, flatten, dropout, expanded_conv2d
 import os
 from utils import load_obj, save_obj
 import numpy as np
 
 
-class MobileNet:
+class MobileNetV2:
     """
     MobileNet Class
     """
@@ -61,164 +61,76 @@ class MobileNet:
         self.__init_network()
         self.__init_output()
 
+    def __expand_conv(self, name, x, num_filters, stride, k=6):
+        res = False
+        if stride[0] == 1 and stride[1] == 1 and num_filters == x.get_shape()[-1].value:
+            if not k == None:
+                res = True
+        return expanded_conv2d(name, x, num_filters=num_filters, 
+                    kernel_size=(3, 3), padding='SAME', stride=stride, k=k, residual=res,
+                    initializer=tf.contrib.layers.xavier_initializer(), 
+                    l2_strength=self.args.l2_strength, bias=None, activation=tf.nn.relu6,
+                    batchnorm_enabled=self.args.batchnorm_enabled, 
+                    is_training=self.is_training)
+
     def __init_network(self):
-        with tf.variable_scope('mobilenet_encoder'):
+        with tf.variable_scope('MobilenetV2'):
             # Preprocessing as done in the paper
             with tf.name_scope('pre_processing'):
                 preprocessed_input = (self.X - self.mean_img) / 255.0
 
             # Model is here!
-            conv1_1 = conv2d('conv_1', preprocessed_input, num_filters=int(round(32 * self.args.width_multiplier)),
-                             kernel_size=(3, 3),
-                             padding='SAME', stride=(2, 2), activation=tf.nn.relu6,
+            conv = conv2d('Conv', preprocessed_input, num_filters=int(round(32 * self.args.width_multiplier)),
+                             kernel_size=(3, 3), padding='SAME', stride=(2, 2), activation=tf.nn.relu6,
                              batchnorm_enabled=self.args.batchnorm_enabled,
                              is_training=self.is_training, l2_strength=self.args.l2_strength, bias=self.args.bias)
-            self.__add_to_nodes([conv1_1])
-            ############################################################################################
-            conv2_1_dw, conv2_1_pw = depthwise_separable_conv2d('conv_ds_2', conv1_1,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=64, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv2_1_dw, conv2_1_pw])
+            # 112 x 112 x 32
+            conv0 = self.__expand_conv('expanded_conv_0', conv, num_filters=16, stride=(1, 1), k=None)
+            conv1 = self.__expand_conv('expanded_conv_1', conv0, num_filters=24, stride=(2, 2))
+            # 56 x 56 x 24
+            conv2 = self.__expand_conv('expanded_conv_2', conv1, num_filters=24, stride=(1, 1))
 
-            conv2_2_dw, conv2_2_pw = depthwise_separable_conv2d('conv_ds_3', conv2_1_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=128, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(2, 2),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv2_2_dw, conv2_2_pw])
-            ############################################################################################
-            conv3_1_dw, conv3_1_pw = depthwise_separable_conv2d('conv_ds_4', conv2_2_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=128, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv3_1_dw, conv3_1_pw])
+            conv3 = self.__expand_conv('expanded_conv_3', conv2, num_filters=32, stride=(2, 2))
+            # 28 x 28 x 32
+            conv4 = self.__expand_conv('expanded_conv_4', conv3, num_filters=32, stride=(1, 1))
+            # 28 x 28 x 32
+            conv5 = self.__expand_conv('expanded_conv_5', conv4, num_filters=32, stride=(1, 1))
+            # 28 x 28 x 32
 
-            conv3_2_dw, conv3_2_pw = depthwise_separable_conv2d('conv_ds_5', conv3_1_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=256, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(2, 2),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv3_2_dw, conv3_2_pw])
-            ############################################################################################
-            conv4_1_dw, conv4_1_pw = depthwise_separable_conv2d('conv_ds_6', conv3_2_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=256, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv4_1_dw, conv4_1_pw])
+            conv6 = self.__expand_conv('expanded_conv_6', conv5, num_filters=64, stride=(2, 2))
+            # 14 x 14 x 64
+            conv7 = self.__expand_conv('expanded_conv_7', conv6, num_filters=64, stride=(1, 1))
+            # 14 x 14 x 64
+            conv8 = self.__expand_conv('expanded_conv_8', conv7, num_filters=64, stride=(1, 1))
+            # 14 x 14 x 64
+            conv9 = self.__expand_conv('expanded_conv_9', conv8, num_filters=64, stride=(1, 1))
+            # 14 x 14 x 64
 
-            conv4_2_dw, conv4_2_pw = depthwise_separable_conv2d('conv_ds_7', conv4_1_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=512, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(2, 2),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv4_2_dw, conv4_2_pw])
-            ############################################################################################
-            conv5_1_dw, conv5_1_pw = depthwise_separable_conv2d('conv_ds_8', conv4_2_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=512, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv5_1_dw, conv5_1_pw])
+            conv10 = self.__expand_conv('expanded_conv_10', conv9, num_filters=96, stride=(1, 1))
+            # 14 x 14 x 96
+            conv11 = self.__expand_conv('expanded_conv_11', conv10, num_filters=96, stride=(1, 1))
+            # 14 x 14 x 96
+            conv12 = self.__expand_conv('expanded_conv_12', conv11, num_filters=96, stride=(1, 1))
+            # 14 x 14 x 96
 
-            conv5_2_dw, conv5_2_pw = depthwise_separable_conv2d('conv_ds_9', conv5_1_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=512, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv5_2_dw, conv5_2_pw])
+            conv13 = self.__expand_conv('expanded_conv_13', conv12, num_filters=160, stride=(2, 2))
+            # 7 x 7 x 160 
+            conv14 = self.__expand_conv('expanded_conv_14', conv13, num_filters=160, stride=(1, 1))
+            conv15 = self.__expand_conv('expanded_conv_15', conv14, num_filters=160, stride=(1, 1))
+            conv16 = self.__expand_conv('expanded_conv_16', conv15, num_filters=320, stride=(1, 1))
 
-            conv5_3_dw, conv5_3_pw = depthwise_separable_conv2d('conv_ds_10', conv5_2_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=512, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv5_3_dw, conv5_3_pw])
 
-            conv5_4_dw, conv5_4_pw = depthwise_separable_conv2d('conv_ds_11', conv5_3_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=512, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv5_4_dw, conv5_4_pw])
+            conv17 = conv2d('Conv_1', conv16, num_filters=1280,kernel_size=(1, 1),
+                             padding='SAME', stride=(1, 1), activation=tf.nn.relu6,
+                             batchnorm_enabled=self.args.batchnorm_enabled,
+                             is_training=self.is_training, 
+                             l2_strength=self.args.l2_strength, bias=self.args.bias)
 
-            conv5_5_dw, conv5_5_pw = depthwise_separable_conv2d('conv_ds_12', conv5_4_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=512, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv5_5_dw, conv5_5_pw])
-
-            conv5_6_dw, conv5_6_pw = depthwise_separable_conv2d('conv_ds_13', conv5_5_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=1024, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(2, 2),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv5_6_dw, conv5_6_pw])
-            ############################################################################################
-            conv6_1_dw, conv6_1_pw = depthwise_separable_conv2d('conv_ds_14', conv5_6_pw,
-                                                                width_multiplier=self.args.width_multiplier,
-                                                                num_filters=1024, kernel_size=(3, 3), padding='SAME',
-                                                                stride=(1, 1),
-                                                                batchnorm_enabled=self.args.batchnorm_enabled,
-                                                                activation=tf.nn.relu6,
-                                                                is_training=self.is_training,
-                                                                l2_strength=self.args.l2_strength,
-                                                                biases=(self.args.bias, self.args.bias))
-            self.__add_to_nodes([conv6_1_dw, conv6_1_pw])
-            ############################################################################################
-            avg_pool = avg_pool_2d(conv6_1_pw, size=(7, 7), stride=(1, 1))
+            self.__add_to_nodes([conv, conv0, conv1, conv2, conv3, conv4, 
+                        conv5, conv6, conv7, conv8, conv9, 
+                        conv10, conv11, conv12, conv13, conv14, 
+                        conv15, conv16, conv17])
+            avg_pool = avg_pool_2d(conv17, size=(7, 7), stride=(1, 1))
             dropped = dropout(avg_pool, self.args.dropout_keep_prob, self.is_training)
             self.logits = flatten(conv2d('fc', dropped, kernel_size=(1, 1), num_filters=self.args.num_classes,
                                          l2_strength=self.args.l2_strength,
