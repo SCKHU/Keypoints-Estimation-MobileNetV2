@@ -9,7 +9,7 @@ def expanded_conv2d(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding
                     initializer=tf.contrib.layers.xavier_initializer(), 
                     l2_strength=0.0, bias=(0.0, 0.0, 0.0), activation=None,
                     batchnorm_enabled=False, dropout_keep_prob=-1, is_training=True):
-    with tf.variable_scope(name):
+    with tf.compat.v1.variable_scope(name):
       # expand (rate = k)
       if k == None:
         conv_1 = x
@@ -50,7 +50,7 @@ def __conv2d_p(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAM
     :param bias: (float) Amount of bias. (if not float, it means pretrained bias)
     :return out: The output of the layer. (N, H', W', num_filters)
     """
-    with tf.variable_scope(name):
+    with tf.compat.v1.variable_scope(name):
         stride = [1, stride[0], stride[1], 1]
         kernel_shape = [kernel_size[0], kernel_size[1], x.shape[-1], num_filters]
 
@@ -61,7 +61,7 @@ def __conv2d_p(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAM
         with tf.name_scope('layer_biases'):
           if not bias == None:
             if isinstance(bias, float):
-                bias = tf.get_variable('biases', [num_filters], initializer=tf.constant_initializer(bias))
+                bias = tf.compat.v1.get_variable('biases', [num_filters], initializer=tf.constant_initializer(bias))
             __variable_summaries(bias)
         with tf.name_scope('layer_conv2d'):
             conv = tf.nn.conv2d(x, w, stride, padding)
@@ -95,7 +95,7 @@ def conv2d(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAME', 
     :param is_training: (boolean) to diff. between training and testing (important for batch normalization and dropout)
     :return: The output tensor of the layer (N, H', W', C').
     """
-    with tf.variable_scope(name) as scope:
+    with tf.compat.v1.variable_scope(name) as scope:
         conv_o_b = __conv2d_p(scope, x=x, w=w, num_filters=num_filters, kernel_size=kernel_size, stride=stride,
                               padding=padding,
                               initializer=initializer, l2_strength=l2_strength, bias=bias)
@@ -132,7 +132,7 @@ def conv2d(name, x, w=None, num_filters=16, kernel_size=(3, 3), padding='SAME', 
 
 def __depthwise_conv2d_p(name, x, w=None, kernel_size=(3, 3), padding='SAME', stride=(1, 1),
                          initializer=tf.contrib.layers.xavier_initializer(), l2_strength=0.0, bias=0.0):
-    with tf.variable_scope(name):
+    with tf.compat.v1.variable_scope(name):
         stride = [1, stride[0], stride[1], 1]
         kernel_shape = [kernel_size[0], kernel_size[1], x.shape[-1], 1]
 
@@ -143,7 +143,7 @@ def __depthwise_conv2d_p(name, x, w=None, kernel_size=(3, 3), padding='SAME', st
         with tf.name_scope('layer_biases'):
           if not bias == None:
             if isinstance(bias, float):
-                bias = tf.get_variable('biases', [x.shape[-1]], initializer=tf.constant_initializer(bias))
+                bias = tf.compat.v1.get_variable('biases', [x.shape[-1]], initializer=tf.constant_initializer(bias))
             __variable_summaries(bias)
         with tf.name_scope('layer_conv2d'):
             conv = tf.nn.depthwise_conv2d(x, w, stride, padding)
@@ -159,7 +159,7 @@ def depthwise_conv2d(name, x, w=None, kernel_size=(3, 3), padding='SAME', stride
                      initializer=tf.contrib.layers.xavier_initializer(), l2_strength=0.0, bias=0.0, activation=None,
                      batchnorm_enabled=False, is_training=True):
     """Implementation of depthwise 2D convolution wrapper"""
-    with tf.variable_scope(name) as scope:
+    with tf.compat.v1.variable_scope(name) as scope:
         conv_o_b = __depthwise_conv2d_p(name=scope, x=x, w=w, kernel_size=kernel_size, padding=padding,
                                         stride=stride, initializer=initializer, l2_strength=l2_strength, bias=bias)
 
@@ -185,7 +185,7 @@ def depthwise_separable_conv2d(name, x, w_depthwise=None, w_pointwise=None, widt
                                is_training=True):
     """Implementation of depthwise separable 2D convolution operator as in MobileNet paper"""
     total_num_filters = int(round(num_filters * width_multiplier))
-    with tf.variable_scope(name) as scope:
+    with tf.compat.v1.variable_scope(name) as scope:
         conv_a = depthwise_conv2d('depthwise', x=x, w=w_depthwise, kernel_size=kernel_size, padding=padding,
                                   stride=stride,
                                   initializer=initializer, l2_strength=l2_strength, bias=biases[0],
@@ -215,12 +215,12 @@ def __dense_p(name, x, w=None, output_dim=128, initializer=tf.contrib.layers.xav
     :return out: The output of the layer. (N, H)
     """
     n_in = x.get_shape()[-1].value
-    with tf.variable_scope(name):
+    with tf.compat.v1.variable_scope(name):
         if w == None:
             w = __variable_with_weight_decay([n_in, output_dim], initializer, l2_strength)
         __variable_summaries(w)
         if isinstance(bias, float):
-            bias = tf.get_variable("layer_biases", [output_dim], tf.float32, tf.constant_initializer(bias))
+            bias = tf.compat.v1.get_variable("layer_biases", [output_dim], tf.float32, tf.constant_initializer(bias))
         __variable_summaries(bias)
         output = tf.nn.bias_add(tf.matmul(x, w), bias)
         return output
@@ -246,7 +246,7 @@ def dense(name, x, w=None, output_dim=128, initializer=tf.contrib.layers.xavier_
     :param is_training: (boolean) to diff. between training and testing (important for batch normalization and dropout)
     :return out: The output of the layer. (N, H)
     """
-    with tf.variable_scope(name) as scope:
+    with tf.compat.v1.variable_scope(name) as scope:
         dense_o_b = __dense_p(name=scope, x=x, w=w, output_dim=output_dim, initializer=initializer,
                               l2_strength=l2_strength,
                               bias=bias)
@@ -348,12 +348,12 @@ def __variable_with_weight_decay(kernel_shape, initializer, wd):
     :param wd:(weight decay) L2 regularization parameter.
     :return: The weights of the kernel initialized. The L2 loss is added to the loss collection.
     """
-    w = tf.get_variable('weights', kernel_shape, tf.float32, initializer=initializer)
+    w = tf.compat.v1.get_variable('weights', kernel_shape, tf.float32, initializer=initializer)
 
-    collection_name = tf.GraphKeys.REGULARIZATION_LOSSES
-    if wd and (not tf.get_variable_scope().reuse):
+    collection_name = tf.compat.v1.GraphKeys.REGULARIZATION_LOSSES
+    if wd and (not tf.compat.v1.get_variable_scope().reuse):
         weight_decay = tf.multiply(tf.nn.l2_loss(w), wd, name='w_loss')
-        tf.add_to_collection(collection_name, weight_decay)
+        tf.compat.v1.add_to_collection(collection_name, weight_decay)
     return w
 
 
@@ -366,10 +366,10 @@ def __variable_summaries(var):
     """
     with tf.name_scope('summaries'):
         mean = tf.reduce_mean(var)
-        tf.summary.scalar('mean', mean)
+        tf.compat.v1.summary.scalar('mean', mean)
         with tf.name_scope('stddev'):
             stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-        tf.summary.scalar('stddev', stddev)
-        tf.summary.scalar('max', tf.reduce_max(var))
-        tf.summary.scalar('min', tf.reduce_min(var))
-        tf.summary.histogram('histogram', var)
+        tf.compat.v1.summary.scalar('stddev', stddev)
+        tf.compat.v1.summary.scalar('max', tf.reduce_max(var))
+        tf.compat.v1.summary.scalar('min', tf.reduce_min(var))
+        tf.compat.v1.summary.histogram('histogram', var)

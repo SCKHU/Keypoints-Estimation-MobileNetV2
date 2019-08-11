@@ -26,7 +26,10 @@ def main():
     sess = tf.Session(config=config)
 
     # Data loading
-    data = DataLoader(config_args.batch_size, config_args.shuffle)
+    data = DataLoader(config_args.train_list, config_args.test_list, 
+            224, 28, config_args.num_classes, augment=[],
+            batch_size=config_args.batch_size, shuffle=config_args.shuffle)
+
     print("Loading Data...")
     config_args.img_height, config_args.img_width, config_args.num_channels, \
     config_args.train_data_size, config_args.test_data_size = data.load_data()

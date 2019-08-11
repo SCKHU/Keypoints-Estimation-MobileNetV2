@@ -34,16 +34,16 @@ class MobileNetV2:
         self.__build()
 
     def __init_input(self):
-        with tf.variable_scope('input'):
+        with tf.compat.v1.variable_scope('input'):
             # Input images
-            self.X = tf.placeholder(tf.float32,
+            self.X = tf.compat.v1.placeholder(tf.float32,
                                     [self.args.batch_size, self.args.img_height, self.args.img_width,
                                      self.args.num_channels])
             # Classification supervision, it's an argmax. Feel free to change it to one-hot,
             # but don't forget to change the loss from sparse as well
-            self.y = tf.placeholder(tf.int32, [self.args.batch_size])
+            self.y = tf.compat.v1.placeholder(tf.float32, [self.args.batch_size, self.args.output_size, self.args.output_size, self.args.num_classes*3])
             # is_training is for batch normalization and dropout, if they exist
-            self.is_training = tf.placeholder(tf.bool)
+            self.is_training = tf.compat.v1.placeholder(tf.bool)
 
     def __init_mean(self):
         # Preparing the mean image.
@@ -74,7 +74,7 @@ class MobileNetV2:
                     is_training=self.is_training)
 
     def __init_network(self):
-        with tf.variable_scope('MobilenetV2'):
+        with tf.compat.v1.variable_scope('MobilenetV2'):
             # Preprocessing as done in the paper
             with tf.name_scope('pre_processing'):
                 preprocessed_input = (self.X - self.mean_img) / 255.0
@@ -130,39 +130,96 @@ class MobileNetV2:
                         conv5, conv6, conv7, conv8, conv9, 
                         conv10, conv11, conv12, conv13, conv14, 
                         conv15, conv16, conv17])
-            avg_pool = avg_pool_2d(conv17, size=(7, 7), stride=(1, 1))
-            dropped = dropout(avg_pool, self.args.dropout_keep_prob, self.is_training)
-            self.logits = flatten(conv2d('fc', dropped, kernel_size=(1, 1), num_filters=self.args.num_classes,
-                                         l2_strength=self.args.l2_strength,
-                                         bias=self.args.bias))
-            self.__add_to_nodes([avg_pool, dropped, self.logits])
+            ############################################################################################
 
+        with tf.compat.v1.variable_scope('Heatmap'):
+            
+            conv18 = conv2d('conv_1', conv17,
+                           num_filters=self.args.num_classes*3, kernel_size=(1, 1), padding='SAME', stride=(1, 1),
+                           l2_strength=self.args.l2_strength, bias=self.args.bias,
+                           activation=None, batchnorm_enabled=self.args.batchnorm_enabled,
+                           is_training=self.is_training)
+            # 7 x 7 x 3K
+            up19 = tf.concat([tf.image.resize_bilinear( conv18, (14,14) ), conv12], -1)
+            conv20_dw, conv20_pw = depthwise_separable_conv2d('conv_ds_1', up19,
+                                    width_multiplier=self.args.width_multiplier,
+                                    num_filters=int(round(self.args.num_classes*3 * self.args.width_multiplier)), 
+                                    kernel_size=(3, 3), padding='SAME',
+                                    stride=(1, 1),
+                                    batchnorm_enabled=self.args.batchnorm_enabled,
+                                    activation=None,
+                                    is_training=self.is_training,
+                                    l2_strength=self.args.l2_strength,
+                                    biases=(self.args.bias, self.args.bias))
+           
+            # 28 x 28 x 3K
+
+            up21 = tf.image.resize_bilinear( conv20_pw, (28,28) )
+            up21_1 = tf.concat([tf.slice(up21, [0,0,0,0],                         [-1,-1,-1,self.args.num_classes]), conv5], -1)
+            up21_2 = tf.concat([tf.slice(up21, [0,0,0,  self.args.num_classes],  [-1,-1,-1, self.args.num_classes*2]), conv5], -1)
+            
+            _, heatmap = depthwise_separable_conv2d('conv_ds_2_1', up21_1,
+                                    width_multiplier=self.args.width_multiplier,
+                                    num_filters=int(round(self.args.num_classes * self.args.width_multiplier)), 
+                                    kernel_size=(3, 3), padding='SAME',
+                                    stride=(1, 1),
+                                    batchnorm_enabled=self.args.batchnorm_enabled,
+                                    activation=tf.nn.sigmoid,
+                                    is_training=self.is_training,
+                                    l2_strength=self.args.l2_strength,
+                                    biases=(self.args.bias, self.args.bias))
+
+            _, offset = depthwise_separable_conv2d('conv_ds_2_2', up21_2,
+                                    width_multiplier=self.args.width_multiplier,
+                                    num_filters=int(round(self.args.num_classes * 2 * self.args.width_multiplier)), 
+                                    kernel_size=(3, 3), padding='SAME',
+                                    stride=(1, 1),
+                                    batchnorm_enabled=self.args.batchnorm_enabled,
+                                    activation=tf.nn.tanh,
+                                    is_training=self.is_training,
+                                    l2_strength=self.args.l2_strength,
+                                    biases=(self.args.bias, self.args.bias))            
+            # 56 x 56 x 3K
+            
+            self.__add_to_nodes([heatmap, offset]) 
+            self.heatmap  = heatmap
+            self.offset = offset 
+            #if self.freeze:
+            #    self.preds = tf.transpose(tf.concat([heatmap, offset],-1),
+            #     perm=[0, 3, 1, 2]) 
+            #else:
+            self.preds = (heatmap, offset)
 
     def __init_output(self):
-        with tf.variable_scope('output'):
-            self.regularization_loss = tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
-            self.cross_entropy_loss = tf.reduce_mean(
-                tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.logits, labels=self.y, name='loss'))
-            self.loss = self.regularization_loss + self.cross_entropy_loss
+        with tf.compat.v1.variable_scope('output'):
+            label_heatmap  = tf.slice(self.y,                      [0,0,0,0],  [-1,-1,-1,self.args.num_classes])
+            label_offset = tf.slice(self.y,[0,0,0,  self.args.num_classes],  [-1,-1,-1,self.args.num_classes*2])
+
+            self.regularization_loss = tf.reduce_sum(tf.compat.v1.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+
+            self.map_loss = tf.compat.v1.losses.mean_squared_error(labels=label_heatmap, predictions=self.heatmap)
+
+            diff_dist = tf.square(label_offset - self.offset)
+            self.offset_loss = tf.reduce_mean(tf.multiply(diff_dist, tf.concat([label_heatmap, label_heatmap], -1)))
+    
+            self.accuracy = self.offset_loss + self.map_loss*5
+            self.loss = self.regularization_loss + self.accuracy
 
             # Important for Batch Normalization
-            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            update_ops = tf.compat.v1.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
-                self.train_op = tf.train.AdamOptimizer(learning_rate=self.args.learning_rate).minimize(self.loss)
-            self.y_out_argmax = tf.argmax(tf.nn.softmax(self.logits), axis=-1, output_type=tf.int32)
-
-            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.y, self.y_out_argmax), tf.float32))
+                self.train_op = tf.compat.v1.train.AdamOptimizer(learning_rate=self.args.learning_rate).minimize(self.loss)
 
         # Summaries needed for TensorBoard
         with tf.name_scope('train-summary-per-iteration'):
-            tf.summary.scalar('loss', self.loss)
-            tf.summary.scalar('acc', self.accuracy)
-            self.summaries_merged = tf.summary.merge_all()
+            tf.compat.v1.summary.scalar('loss', self.loss)
+            tf.compat.v1.summary.scalar('acc', self.accuracy)
+            self.summaries_merged = tf.compat.v1.summary.merge_all()
 
     def __restore(self, file_name, sess):
         try:
             print("Loading ImageNet pretrained weights...")
-            variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='mobilenet_encoder')
+            variables = tf.compat.v1.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='mobilenet_encoder')
             dict = load_obj(file_name)
             run_list = []
             for variable in variables:
@@ -186,9 +243,9 @@ class MobileNetV2:
         Create a global epoch tensor to totally save the process of the training
         :return:
         """
-        with tf.variable_scope('global_epoch'):
+        with tf.compat.v1.variable_scope('global_epoch'):
             self.global_epoch_tensor = tf.Variable(-1, trainable=False, name='global_epoch')
-            self.global_epoch_input = tf.placeholder('int32', None, name='global_epoch_input')
+            self.global_epoch_input = tf.compat.v1.placeholder('int32', None, name='global_epoch_input')
             self.global_epoch_assign_op = self.global_epoch_tensor.assign(self.global_epoch_input)
 
     def __init_global_step(self):
@@ -196,7 +253,7 @@ class MobileNetV2:
         Create a global step variable to be a reference to the number of iterations
         :return:
         """
-        with tf.variable_scope('global_step'):
+        with tf.compat.v1.variable_scope('global_step'):
             self.global_step_tensor = tf.Variable(0, trainable=False, name='global_step')
-            self.global_step_input = tf.placeholder('int32', None, name='global_step_input')
+            self.global_step_input = tf.compat.v1.placeholder('int32', None, name='global_step_input')
             self.global_step_assign_op = self.global_step_tensor.assign(self.global_step_input)

@@ -3,6 +3,7 @@ from tqdm import tqdm
 import numpy as np
 
 
+
 class Train:
     """Trainer class for the CNN.
     It's also responsible for loading/saving the model checkpoints from/to experiments/experiment_name/checkpoint_dir"""
@@ -11,9 +12,9 @@ class Train:
         self.sess = sess
         self.model = model
         self.args = self.model.args
-        self.saver = tf.train.Saver(max_to_keep=self.args.max_to_keep,
-                                    keep_checkpoint_every_n_hours=10,
-                                    save_relative_paths=True)
+        self.saver = tf.compat.v1.train.Saver(max_to_keep=self.args.max_to_keep,
+                        keep_checkpoint_every_n_hours=10,
+                        save_relative_paths=True)
         # Summarizer references
         self.data = data
         self.summarizer = summarizer
@@ -45,7 +46,7 @@ class Train:
     def __load_model(self):
         self.model.load_pretrained_weights(self.sess)
 
-        latest_checkpoint = tf.train.latest_checkpoint(self.args.checkpoint_dir)
+        latest_checkpoint = tf.compat.v1.train.latest_checkpoint(self.args.checkpoint_dir)
         if latest_checkpoint:
             print("Loading model checkpoint {} ...\n".format(latest_checkpoint))
             self.saver.restore(self.sess, latest_checkpoint)
@@ -57,11 +58,11 @@ class Train:
     # Train and Test methods
     def train(self):
         for cur_epoch in range(self.model.global_epoch_tensor.eval(self.sess) + 1, self.args.num_epochs + 1, 1):
-
+            image_tensor, label_tensor, label_pts = self.data.generate_batch_(type='train')
             # Initialize tqdm
             num_iterations = self.args.train_data_size // self.args.batch_size
-            tqdm_batch = tqdm(self.data.generate_batch(type='train'), total=num_iterations,
-                              desc="Epoch-" + str(cur_epoch) + "-")
+            #tqdm_batch = tqdm(self.data.generate_batch(type='train'), total=num_iterations,
+            #                  desc="Epoch-" + str(cur_epoch) + "-")
 
             # Initialize the current iterations
             cur_iteration = 0
@@ -71,13 +72,16 @@ class Train:
             acc_list = []
 
             # Loop by the number of iterations
-            for X_batch, y_batch in tqdm_batch:
+            #for X_batch, y_batch in tqdm_batch:
+            #for cur_iteration in range(num_iterations):
+            for cur_iteration in tqdm(range(num_iterations)):
+                image_batch, label_batch = self.sess.run([image_tensor, label_tensor]) 
                 # Get the current iteration for summarizing it
                 cur_step = self.model.global_step_tensor.eval(self.sess)
 
                 # Feed this variables to the network
-                feed_dict = {self.model.X: X_batch,
-                             self.model.y: y_batch,
+                feed_dict = {self.model.X: image_batch,
+                             self.model.y: label_batch,
                              self.model.is_training: True
                              }
                 # Run the feed_forward
@@ -110,7 +114,7 @@ class Train:
                                                            feed_dict={self.model.global_epoch_input: cur_epoch + 1})
 
                     # Print in console
-                    tqdm_batch.close()
+                    #tqdm_batch.close()
                     print("Epoch-" + str(cur_epoch) + " | " + "loss: " + str(avg_loss) + " -" + " acc: " + str(
                         avg_acc)[
                                                                                                            :7])
@@ -131,23 +135,26 @@ class Train:
 
     def test(self, test_type='val'):
         num_iterations = self.args.test_data_size // self.args.batch_size
-        tqdm_batch = tqdm(self.data.generate_batch(type=test_type), total=num_iterations,
-                          desc='Testing')
+        image_tensor, label_tensor, label_pts = self.data.generate_batch_(type='val')
+
         # Initialize classification accuracy and loss lists
         loss_list = []
         acc_list = []
         cur_iteration = 0
 
-        for X_batch, y_batch in tqdm_batch:
+        #for X_batch, y_batch in tqdm_batch:
+
+        for cur_iteration in tqdm(range(num_iterations)):
+            image_batch, label_batch = self.sess.run([image_tensor, label_tensor]) 
             # Feed this variables to the network
-            feed_dict = {self.model.X: X_batch,
-                         self.model.y: y_batch,
+            feed_dict = {self.model.X: image_batch,
+                         self.model.y: label_batch,
                          self.model.is_training: False
                          }
             # Run the feed_forward
             # Nodes are important for debugging as they dump all the graph!
-            loss, acc, argmax, nodes = self.sess.run(
-                [self.model.loss, self.model.accuracy, self.model.y_out_argmax, self.model.nodes],
+            preds, loss, acc = self.sess.run(
+                [self.model.preds, self.model.loss, self.model.accuracy],
                 feed_dict=feed_dict)
 
             # Append loss and accuracy

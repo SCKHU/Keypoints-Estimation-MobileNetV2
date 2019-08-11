@@ -84,3 +84,36 @@ def calculate_flops():
     tf.profiler.profile(
         tf.get_default_graph(),
         options=tf.profiler.ProfileOptionBuilder.float_operation(), cmd='scope')
+
+
+def pred_pts(preds, order='bchw'):
+
+    if order == 'bchw': #change order to bhwc
+        preds = np.transpose(preds, (0,2,3,1))
+    batch_size = preds.shape[0]
+    output_size = preds.shape[1]
+    num_class = preds.shape[3]//3
+    keypoints = np.zeros((num_class, 2 )  )    
+    
+    heatmaps = preds[:,:,:,0:num_class]
+    offsets_x = preds[:,:,:,num_class:num_class*2]
+    offsets_y = preds[:,:,:,num_class*2:num_class*3]
+
+    for b in range(batch_size):
+        heatmap = heatmaps[b]
+        offset_x = offsets_x[b]*8.0
+        offset_y = offsets_y[b]*8.0
+        
+        X1 = np.linspace(1, output_size, output_size)
+        [X, Y] = np.meshgrid(X1, X1)
+
+        for k in range(num_class):
+            weight = heatmap[:,:,k]
+            weight[weight < 0.01] = 0
+            pos_x = (X + offset_x[:,:,k])*weight
+            pos_y = (Y + offset_y[:,:,k])*weight
+
+            keypoints[k][0] = pos_x.sum()/(weight.sum() + 0.0000000001)
+            keypoints[k][1] = pos_y.sum()/(weight.sum() + 0.0000000001) 
+
+    return keypoints / output_size
